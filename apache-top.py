@@ -261,9 +261,9 @@ def print_screen(screen, url, show_scoreboard, apache_version):
                     show_scoreboard = 1
                     message = "Showing mod_status scoreboard"
                 else:
-					show_scoreboard = 0
-					message = "Hiding mod_status scoreboard"
-					y = 0
+                    show_scoreboard = 0
+                    message = "Hiding mod_status scoreboard"
+                    y = 0
             elif c == "a":
                 # mostra els actius
                 if show_only_active:
@@ -282,8 +282,8 @@ def print_screen(screen, url, show_scoreboard, apache_version):
                     message = "Normal sorting"
             c = ""
 
-	except IndexError:
-	    raise
+        except IndexError:
+            raise
         except:
             pass
 
@@ -341,22 +341,22 @@ url. It needs the ExtendedStatus flag
 
     Usage: apache-top [-s] -u url
         -u url    Url where apache-status is located
-		  Example: apache-top.py -u http://www.domain.com/server-status
+          Example: apache-top.py -u http://www.domain.com/server-status
         -s        Show scoreboard
 
 
     Interactive keys:
-	q	Exit
-	P	Sort by PID
-	C	Sort by CPU usage
-	S	Sort by Seconds since beginning of most recent request
-	V	Sort by VirtualHost
-	M	Sort by Mopde of operation
-	R	Sort by Request
-	I	Sort by Ip
-	s	Show/Hide mod_status scoreboard
-	a	Switch between show all processes and show only active processes (default)
-	r	Reverse sort
+    q    Exit
+    P    Sort by PID
+    C    Sort by CPU usage
+    S    Sort by Seconds since beginning of most recent request
+    V    Sort by VirtualHost
+    M    Sort by Mopde of operation
+    R    Sort by Request
+    I    Sort by Ip
+    s    Show/Hide mod_status scoreboard
+    a    Switch between show all processes and show only active processes (default)
+    r    Reverse sort
 
     """
 
@@ -377,9 +377,9 @@ url. It needs the ExtendedStatus flag
     }
 
     try:
-    	print_screen(stdscr,url,show_scoreboard,apache_version)
+        print_screen(stdscr,url,show_scoreboard,apache_version)
     except:
-    	raise
+        raise
 
 
 if __name__ == "__main__":
@@ -405,11 +405,15 @@ if __name__ == "__main__":
         print "*** ERROR: Url missing\n"
         usage()
 
+    # detect apache version
     try:
-        data = ApacheStatusParser()
         statusdata = urllib.urlopen(url).read()
-        # detect apache version
         apache_version = re.search('Server Version: Apache/([^ ]+)', statusdata).group(1)
+    except:
+        print "ERROR parsing the data. Please, make sure you are alowed to read the server-status page and you have ExtendedStatus flag activated"
+        sys.exit(2)
+
+    try:
         # Initialize curses
         stdscr=curses.initscr()
         # Turn off echoing of keys, and enter cbreak mode,
@@ -422,9 +426,9 @@ if __name__ == "__main__":
         # a special value like curses.KEY_LEFT will be returned
         stdscr.keypad(1)
         try:
-		main(url,stdscr,show_scoreboard,apache_version)                    # Enter the main loop
-	except:
-		raise
+            main(url,stdscr,show_scoreboard,apache_version)                    # Enter the main loop
+        except:
+            raise
         # Set everything back to normal
         curses.curs_set(1)
         stdscr.keypad(0)
@@ -439,4 +443,4 @@ if __name__ == "__main__":
         curses.nocbreak()
         curses.endwin()
         #traceback.print_exc()           # Print the exception
-	print "ERROR parsing the data. Please, make sure you are alowed to read the server-status page and you have ExtendedStatus flag activated"
+    print "ERROR parsing the data. Please, make sure you are alowed to read the server-status page and you have ExtendedStatus flag activated"
