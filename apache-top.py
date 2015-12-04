@@ -20,6 +20,7 @@
 #
 
 from HTMLParser import HTMLParser
+from distutils.version import StrictVersion
 import operator
 import sys
 import urllib
@@ -27,6 +28,7 @@ import curses
 import traceback
 import getopt
 import time
+import re
 
 
 class ApacheStatusParser(HTMLParser):
@@ -34,6 +36,7 @@ class ApacheStatusParser(HTMLParser):
     Clase que parseja la sortida del handler server-status de apache
     """
 
+    apache_version = 0
     performance_info = 2
     scoreboard = 3
     proceses = 4
@@ -55,6 +58,15 @@ class ApacheStatusParser(HTMLParser):
         self.store = False
         self.append = False
         self.status = 1
+
+    def set_apache_version(self, version):
+        self.apache_version = version
+        if self.apache_new():
+            self.scoreboard = 4
+            self.proceses = 5
+
+    def apache_new(self):
+        return StrictVersion(self.apache_version) >= StrictVersion('2.4.0')
 
     def handle_starttag(self, tag, attrs):
         if tag == "b":
@@ -141,7 +153,7 @@ def usage(exit = 1):
     print main.__doc__
     sys.exit(exit)
 
-def print_screen(screen, url, show_scoreboard):
+def print_screen(screen, url, show_scoreboard, apache_version):
     screen = stdscr.subwin(0, 0)
     screen.nodelay(1)
 
@@ -156,6 +168,7 @@ def print_screen(screen, url, show_scoreboard):
     while not end:
         try:
             data = ApacheStatusParser()
+            data.set_apache_version(apache_version)
             statusdata = urllib.urlopen(url).read()
             data.feed(statusdata)
             data.eval_data()
@@ -165,9 +178,22 @@ def print_screen(screen, url, show_scoreboard):
             screen.clear()
 
             # imprimim el header
-            screen.addstr(0,0,data.performance_info_data[5].replace("Server uptime: ","Uptime:").replace(" days","d").replace(" day","d").replace(" hours","h").replace(" hour","h").replace(" minutes","m").replace(" minute","m").replace(" seconds","s").replace("second","s") + ", " + data.performance_info_data[3])
-            screen.addstr(1,0,data.performance_info_data[7])
-            screen.addstr(2,0,data.performance_info_data[8].replace("request","req").replace("second","sec") + ", Active/Idle: " + data.performance_info_data[9].split()[0] + "/" + data.performance_info_data[9].split()[5])
+            if data.apache_new():
+                data_uptime = 7
+                data_restart = 4
+                data_cpu = 10
+                data_reqs = 11
+                data_procs = 12
+            else:
+                data_uptime = 5
+                data_restart = 3
+                data_cpu = 7
+                data_reqs = 8
+                data_procs = 9
+
+            screen.addstr(0,0,data.performance_info_data[data_uptime].replace("Server uptime: ","Uptime:").replace(" days","d").replace(" day","d").replace(" hours","h").replace(" hour","h").replace(" minutes","m").replace(" minute","m").replace(" seconds","s").replace("second","s") + ", " + data.performance_info_data[data_restart])
+            screen.addstr(1,0,data.performance_info_data[data_cpu])
+            screen.addstr(2,0,data.performance_info_data[data_reqs].replace("request","req").replace("second","sec") + ", Active/Idle: " + data.performance_info_data[data_procs].split()[0] + "/" + data.performance_info_data[data_procs].split()[5])
 
             # evaluar scoreboard
             if show_scoreboard:
@@ -309,7 +335,7 @@ def print_process(y,x,screen,process,columns,show_only_active,width):
     else:
         return 0
 
-def main(url, stdscr, show_scoreboard):
+def main(url, stdscr, show_scoreboard, apache_version):
     """Shows the actual status of the Apache web server using the server-status
 url. It needs the ExtendedStatus flag
 
@@ -351,7 +377,7 @@ url. It needs the ExtendedStatus flag
     }
 
     try:
-    	print_screen(stdscr,url,show_scoreboard)
+    	print_screen(stdscr,url,show_scoreboard,apache_version)
     except:
     	raise
 
@@ -380,6 +406,10 @@ if __name__ == "__main__":
         usage()
 
     try:
+        data = ApacheStatusParser()
+        statusdata = urllib.urlopen(url).read()
+        # detect apache version
+        apache_version = re.search('Server Version: Apache/([^ ]+)', statusdata).group(1)
         # Initialize curses
         stdscr=curses.initscr()
         # Turn off echoing of keys, and enter cbreak mode,
@@ -392,7 +422,7 @@ if __name__ == "__main__":
         # a special value like curses.KEY_LEFT will be returned
         stdscr.keypad(1)
         try:
-		main(url,stdscr,show_scoreboard)                    # Enter the main loop
+		main(url,stdscr,show_scoreboard,apache_version)                    # Enter the main loop
 	except:
 		raise
         # Set everything back to normal
