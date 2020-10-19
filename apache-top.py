@@ -20,6 +20,7 @@
 #
 
 from HTMLParser import HTMLParser
+from distutils.version import StrictVersion
 import operator
 import sys
 import urllib
@@ -27,7 +28,14 @@ import curses
 import traceback
 import getopt
 import time
+import re
 
+# Compiled re for info searching
+RE_UPTIME = re.compile('^Server uptime: +(.*)$')
+RE_RESTART = re.compile('^Restart Time: (.*)$')
+RE_CPU = re.compile('^CPU Usage: (.*)$')
+RE_RPS = re.compile('(.*requests/sec.*)')
+RE_REQUESTS = re.compile('^([0-9]+) requests currently being processed, ([0-9]+) idle workers')
 
 class ApacheStatusParser(HTMLParser):
     """
@@ -55,6 +63,28 @@ class ApacheStatusParser(HTMLParser):
         self.store = False
         self.append = False
         self.status = 1
+
+    def set_apache_version(self, version):
+        self.apache_version = version
+        self.apache_sversion = StrictVersion(self.apache_version)
+
+        # New fields (protocol etc) in commit https://github.com/apache/httpd/commit/909aa9a
+        # broke display of request
+        if self.apache_sversion >= StrictVersion('2.4.19'):
+            self.status_format = 3
+            self.scoreboard = 4
+            self.proceses = 5
+
+        # There is new thread (async requests) in 2.4.x at start so
+        # we have to increase table indexes
+        elif self.apache_sversion >= StrictVersion('2.4.0'):
+            self.status_format = 2
+            self.scoreboard = 4
+            self.proceses = 5
+
+        # old extended status without threads table
+        else:
+            self.status_format = 1
 
     def handle_starttag(self, tag, attrs):
         if tag == "b":
@@ -141,7 +171,7 @@ def usage(exit = 1):
     print main.__doc__
     sys.exit(exit)
 
-def print_screen(screen, url, show_scoreboard):
+def print_screen(screen, url, show_scoreboard, apache_version):
     screen = stdscr.subwin(0, 0)
     screen.nodelay(1)
 
@@ -220,6 +250,7 @@ def print_screen(screen, url, show_scoreboard):
             c = ""
 
             data = ApacheStatusParser()
+            data.set_apache_version(apache_version)
             statusdata = urllib.urlopen(url).read()
             data.feed(statusdata)
             data.eval_data()
@@ -228,10 +259,36 @@ def print_screen(screen, url, show_scoreboard):
             (height, width) = screen.getmaxyx()
             screen.clear()
 
-            # imprimim el header
-            screen.addstr(0,0,data.performance_info_data[5].replace("Server uptime: ","Uptime:").replace(" days","d").replace(" day","d").replace(" hours","h").replace(" hour","h").replace(" minutes","m").replace(" minute","m").replace(" seconds","s").replace("second","s") + ", " + data.performance_info_data[3])
-            screen.addstr(1,0,data.performance_info_data[7])
-            screen.addstr(2,0,data.performance_info_data[8].replace("request","req").replace("second","sec") + ", Active/Idle: " + data.performance_info_data[9].split()[0] + "/" + data.performance_info_data[9].split()[5])
+            info_uptime = info_restart = info_cpu = info_rps = info_requests = ""
+            for line in data.performance_info_data:
+                line_uptime = RE_UPTIME.match(line)
+                if line_uptime:
+                    info_uptime = "Uptime: " + line_uptime.group(1)
+
+                line_restart = RE_RESTART.match(line)
+                if line_restart:
+                    info_restart = "Restart Time: " + line_restart.group(1)
+
+                line_cpu = RE_CPU.match(line)
+                if line_cpu:
+                    info_cpu = "CPU Usage: " + line_cpu.group(1)
+
+                line_rps = RE_RPS.match(line)
+                if line_rps:
+                    info_rps = line_rps.group(1)
+
+                line_requests = RE_REQUESTS.match(line)
+                if line_requests:
+                    info_requests = line_requests.group(1) + "/" + line_requests.group(2)
+
+            display_uptime = info_uptime.replace(" days","d").replace(" day","d").replace(" hours","h").replace(" hour","h").replace(" minutes","m").replace(" minute","m").replace(" seconds","s").replace("second","s") + ", " + info_restart
+            display_cpu = info_cpu
+            display_requests = info_rps + ", Active/Idle: " + info_requests
+
+            # # imprimim el header
+            screen.addstr(0, 0, display_uptime)
+            screen.addstr(1, 0, display_cpu)
+            screen.addstr(2, 0, display_requests)
 
             # evaluar scoreboard
             if show_scoreboard:
@@ -251,7 +308,11 @@ def print_screen(screen, url, show_scoreboard):
                 screen.addstr(y+5+num/width,0,message, curses.A_BOLD | curses.A_REVERSE)
                 message = ""
 
-            print_proceses(y+6+num/width,0,screen, data.proceses_data, columns=[ 1, 3, 5, 4, 11, 10, 12 ], sort=sort, reverse=reverse, width=width, show_only_active=show_only_active )
+            columns = [ 1, 3, 5, 4, 11, 10, 12 ]
+            if data.status_format > 2:
+                columns = [ 1, 3, 5, 4, 13, 11, 14 ]
+
+            print_proceses(y+6+num/width,0,screen, data.proceses_data, columns=columns, sort=sort, reverse=reverse, width=width, show_only_active=show_only_active )
 
             #screen.hline(2, 1, curses.ACS_HLINE, 77)
             screen.refresh()
@@ -310,7 +371,7 @@ def print_process(y,x,screen,process,columns,show_only_active,width):
     else:
         return 0
 
-def main(url, stdscr, show_scoreboard):
+def main(url, stdscr, show_scoreboard, apache_version):
     """Shows the actual status of the Apache web server using the server-status
 url. It needs the ExtendedStatus flag
 
@@ -352,7 +413,7 @@ url. It needs the ExtendedStatus flag
     }
 
     try:
-        print_screen(stdscr,url,show_scoreboard)
+        print_screen(stdscr,url,show_scoreboard,apache_version)
     except:
         raise
 
@@ -380,6 +441,13 @@ if __name__ == "__main__":
         print "*** ERROR: Url missing\n"
         usage()
 
+    # detect apache version
+    try:
+        statusdata = urllib.urlopen(url).read()
+        apache_version = re.search('Server Version: Apache/([^ ]+)', statusdata).group(1)
+    except:
+        print "ERROR parsing the data. Please, make sure you are alowed to read the server-status page and you have ExtendedStatus flag activated"
+
     try:
         # Initialize curses
         stdscr=curses.initscr()
@@ -393,7 +461,7 @@ if __name__ == "__main__":
         # a special value like curses.KEY_LEFT will be returned
         stdscr.keypad(1)
         try:
-            main(url,stdscr,show_scoreboard)                    # Enter the main loop
+            main(url,stdscr,show_scoreboard,apache_version)                    # Enter the main loop
         except:
             raise
         # Set everything back to normal
@@ -410,4 +478,4 @@ if __name__ == "__main__":
         curses.nocbreak()
         curses.endwin()
         #traceback.print_exc()           # Print the exception
-    print "ERROR parsing the data. Please, make sure you are alowed to read the server-status page and you have ExtendedStatus flag activated"
+        print "ERROR parsing the data. Please, make sure you are alowed to read the server-status page and you have ExtendedStatus flag activated"
